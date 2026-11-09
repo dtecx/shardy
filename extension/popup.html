@@ -24,6 +24,7 @@
     --done: #3cce7b;
     --alert: #f44336;
     --rank-e: #7a6440; --rank-d: #c8801e; --rank-c: #9aa0a6; --rank-b: #3fb0c4; --rank-a: #c0344d; /* MangaLib rank colors */
+    --bar: #c46a00; /* light-theme bar orange, 3:1 against the panel */
     --r-control: 6px;
     --r-panel: 12px;
   }
@@ -43,6 +44,7 @@
       --orange-soft: rgba(255, 145, 0, .16);
       --done: #4baf50;
       --alert: #de7072;
+      --bar: #ff9100;
     }
   }
 
@@ -187,9 +189,37 @@
   .rank[aria-pressed="true"] { opacity: 1; }
   .rank:active { transform: scale(.95); }
   .rank.E { background: var(--rank-e); } .rank.D { background: var(--rank-d); } .rank.C { background: var(--rank-c); } .rank.B { background: var(--rank-b); } .rank.A { background: var(--rank-a); }
+  .warn-text:empty { display: none; }
+  .warn-text { color: var(--ink); }
   .hint { font-size: 12px; color: var(--ink-muted); margin-top: 6px; text-wrap: pretty; }
   .grid { display: grid; grid-template-columns: 1fr auto; gap: 8px 12px; align-items: center; margin-top: 12px; font-size: 13px; }
   .pair { display: flex; align-items: center; gap: 4px; color: var(--ink-muted); }
+
+  /* opened as a tab (importing): center the popup-sized panel */
+  html.page { background: var(--page); }
+  html.page body { margin: 32px auto; max-height: none; border: 1px solid var(--edge); border-radius: var(--r-panel); }
+  html.page .tabpanel { max-height: none; }
+
+  /* update notice */
+  .update { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin: 8px 12px 0; padding: 8px 12px; border-radius: var(--r-control); background: var(--orange-soft); color: var(--ink); font-size: 13px; text-decoration: none; flex: none; }
+  .update b { color: var(--orange); font-weight: 600; white-space: nowrap; }
+  .update:hover { background: var(--fill-hover); }
+  .update[hidden] { display: none; }
+
+  /* history */
+  .hfacts { margin: 6px 0 4px; padding-top: 0; border-top: 0; }
+  .chart { position: relative; margin-top: 8px; padding-top: 30px; } /* headroom: tooltip and the peak label */
+  .bars { display: flex; align-items: flex-end; gap: 2px; height: 92px; border-bottom: 1px solid var(--edge); }
+  .bars .col { flex: 1; height: 100%; display: flex; align-items: flex-end; justify-content: center; position: relative; cursor: default; }
+  .bars .col:hover, .bars .col:focus-visible { background: var(--fill); border-radius: 4px 4px 0 0; outline: none; }
+  .bars i { display: block; width: 62%; min-height: 0; background: var(--bar); border-radius: 4px 4px 0 0; }
+  .bars .peak { position: absolute; bottom: calc(var(--h) + 3px); font-size: 11px; color: var(--ink-soft); font-style: normal; }
+  .axis { display: flex; justify-content: space-between; font-size: 11px; color: var(--ink-muted); margin-top: 4px; }
+  .tip { position: absolute; top: 0; transform: translateX(-50%); background: var(--panel); color: var(--ink); border: 1px solid var(--edge-strong); border-radius: var(--r-control); padding: 4px 8px; font-size: 12px; white-space: nowrap; pointer-events: none; z-index: 2; }
+  .tip[hidden] { display: none; }
+  .rankdot { display: inline-grid; place-items: center; min-width: 22px; height: 18px; padding: 0 4px; border-radius: 4px; color: #fff; font-size: 11px; font-weight: 600; background: var(--fill-hover); }
+  .rankdot.E { background: var(--rank-e); } .rankdot.D { background: var(--rank-d); } .rankdot.C { background: var(--rank-c); } .rankdot.B { background: var(--rank-b); } .rankdot.A { background: var(--rank-a); }
+  .sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
   @media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }
 </style>
 </head>
@@ -211,11 +241,14 @@
     <div class="who" id="account"></div>
   </div>
 
+  <a class="update" id="update" href="#" target="_blank" rel="noopener" hidden></a>
+
   <div class="hero" id="hero"></div>
 
   <div class="tabs" role="tablist">
     <button role="tab" id="tab-queue" aria-controls="queue" aria-selected="true"><span data-i18n="tabQueue"></span><sup id="queueCount" class="num"></sup></button>
     <button role="tab" id="tab-add" aria-controls="add" aria-selected="false" data-i18n="tabAdd"></button>
+    <button role="tab" id="tab-history" aria-controls="history" aria-selected="false" data-i18n="tabHistory"></button>
     <button role="tab" id="tab-settings" aria-controls="settings" aria-selected="false" data-i18n="tabSettings"></button>
   </div>
 
@@ -240,6 +273,13 @@
     <div class="hint" id="msg" role="status" aria-live="polite"></div>
   </section>
 
+  <section class="tabpanel" id="history" role="tabpanel" aria-labelledby="tab-history" hidden>
+    <dl class="facts hfacts" id="hFacts"></dl>
+    <div class="chart" id="hChart"></div>
+    <h3 data-i18n="hCardsTitle"></h3>
+    <ul id="hCards"></ul>
+  </section>
+
   <section class="tabpanel" id="settings" role="tabpanel" aria-labelledby="tab-settings" hidden>
     <h3 data-i18n="speed"></h3>
     <div class="chips seg" id="speeds" role="group"></div>
@@ -259,6 +299,18 @@
     <div class="hint" data-i18n="autoBuyHint"></div>
     <h3 data-i18n="language"></h3>
     <div class="chips" id="langs" role="group"></div>
+    <h3 data-i18n="notifications"></h3>
+    <div class="chips" id="notify" role="group"></div>
+    <div class="hint" data-i18n="notifyHint"></div>
+    <h3 data-i18n="backup"></h3>
+    <div class="actions">
+      <button id="exportQueue" class="soft" data-i18n="exportQueue"></button>
+      <button id="importQueue" class="soft" data-i18n="importQueue"></button>
+    </div>
+    <input id="importFile" type="file" accept="application/json,.json" hidden>
+    <div class="hint" data-i18n="importHint"></div>
+    <div class="hint warn-text" id="importMsg" role="status" aria-live="polite"></div>
+    <div class="hint num" id="versionLine"></div>
   </section>
 
   <script src="shared.js"></script>

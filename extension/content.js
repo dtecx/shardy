@@ -12,6 +12,20 @@ const today = () => new Date().toLocaleDateString('sv');
 const load = async () => ({ ...DEFAULTS, ...(await chrome.storage.local.get(null)) });
 const save = o => chrome.storage.local.set(o);
 const status = (k, p = {}) => { console.log('[Shardy]', k, p); return save({ status: { k, p, at: Date.now() } }); };
+// Desktop notification through the service worker (it checks the user's setting and language).
+const notify = (k, p = {}) => chrome.runtime.sendMessage({ type: 'notify', k, p }).catch(() => {});
+
+// --- history: shards and chapters per day, and a log of cards obtained ---
+const HISTORY_DAYS = 90, CARD_LOG = 50;
+async function addHistory({ shards = 0, chapters = 0, cards = [] }) {
+  const { history = {}, cardLog = [] } = await chrome.storage.local.get(['history', 'cardLog']);
+  const day = today();
+  const h = history[day] || { shards: 0, chapters: 0, cards: 0 };
+  history[day] = { shards: h.shards + shards, chapters: h.chapters + chapters, cards: h.cards + cards.length };
+  const oldest = new Date(Date.now() - HISTORY_DAYS * 864e5).toLocaleDateString('sv');
+  for (const d of Object.keys(history)) if (d < oldest) delete history[d];
+  await save({ history, cardLog: [...cards, ...cardLog].slice(0, CARD_LOG) });
+}
 
 // --- sleeping on the service worker's clock (not throttled in hidden tabs) ---
 let port = null, seq = 0;
@@ -109,7 +123,7 @@ async function titleInfo(slug, withPages) {
 
 // Exchanges shards for missing cards of the selected ranks while affordable. The site gives a random
 // missing card per exchange, so nothing here can produce a duplicate (ranks with no missing cards are skipped).
-async function autoBuy(slug, ranks) {
+async function autoBuy(slug, ranks, title) {
   const bought = [];
   for (let i = 0; i < 30; i++) {
     const data = await shardData(slug);
@@ -120,8 +134,11 @@ async function autoBuy(slug, ranks) {
     let res;
     try { res = await api(`cards/shards/title/manga/${parseInt(slug)}/exchange`, { rank: opt.rank }); }
     catch (e) { if (e instanceof AuthError) throw e; await status('st_buy_failed', { rank: opt.rank }); break; } // reading goes on
-    bought.push({ rank: opt.rank, name: res?.card?.name || '' });
-    await status('st_bought', { rank: opt.rank, name: res?.card?.name || '' });
+    const card = { rank: opt.rank, name: res?.card?.name || '', title, slug, at: Date.now() };
+    bought.push(card);
+    await addHistory({ cards: [card] });
+    await status('st_bought', card);
+    await notify('n_card', card);
   }
   return bought;
 }
@@ -306,23 +323,34 @@ async function onChapterDone(s, item, chapterPath, pagesRead) {
   await markRead(item.slug, chapterPath);
   const day = today();
   const dayCount = (s.day === day ? s.dayCount : 0) + 1;
-  if (s.autoBuy) await autoBuy(item.slug, s.ranks);
-  const sum = await shardState(item.slug, s.ranks);
+  // Shards this chapter paid, measured before auto-exchange spends any.
+  const before = await shardState(item.slug, s.ranks);
+  const gained = before.balance - (item.balance ?? before.balance);
+  const bought = s.autoBuy ? await autoBuy(item.slug, s.ranks, item.name) : [];
+  const sum = bought.length ? await shardState(item.slug, s.ranks) : before;
+  // Cards that appeared since the last check: bought here, or exchanged by hand on the site.
+  const manual = Math.max(0, (sum.collected ?? 0) - (item.collected ?? sum.collected ?? 0) - bought.length);
+  const at = Date.now();
+  const cards = Array.from({ length: manual }, () => ({ rank: '', name: '', title: item.name, slug: item.slug, at }));
+  await addHistory({ shards: Math.max(0, gained), chapters: 1, cards }); // bought cards were logged by autoBuy
 
   // Moving averages for the ETA: shards per chapter (global) and pages per chapter (per title).
   const ema = (old, v) => (old ? old * 0.85 + v * 0.15 : v);
   const stats = { ...s.stats };
-  const gained = sum.balance - (item.balance ?? sum.balance);
-  if (item.balance != null && gained > 0 && gained < 20 && !s.autoBuy) stats.shardsPerCh = ema(stats.shardsPerCh, gained);
+  if (item.balance != null && gained > 0 && gained < 20) stats.shardsPerCh = ema(stats.shardsPerCh, gained);
   if (pagesRead) stats.pagesPerCh = ema(stats.pagesPerCh, pagesRead);
   const pagesPerCh = pagesRead ? Math.round(ema(item.pagesPerCh, pagesRead)) : item.pagesPerCh;
-  zeroStreak = gained > 0 || s.autoBuy ? 0 : zeroStreak + 1;
+  zeroStreak = gained > 0 ? 0 : zeroStreak + 1;
 
   const done = ['complete', 'enough', 'noCards'].includes(titleState(sum));
   await updateItem(item.slug, { ...sum, pagesPerCh, done });
   await save({ day, dayCount, stats });
   await status('st_progress', { name: item.name, b: sum.balance, n: sum.need, c: dayCount });
-  if (done) { await status('st_title_done', { name: item.name }); return restoreBookmarks([item.slug], true); }
+  if (done) {
+    await status('st_title_done', { name: item.name });
+    await notify('n_title_done', { name: item.name });
+    return restoreBookmarks([item.slug], true);
+  }
 
   const weekly = await weeklyLimit().catch(() => null);
   if (weekly && weekly.remaining <= 0) return; // next step waits for the reset
@@ -384,13 +412,14 @@ async function step() {
   const weekly = s.weekly && now - s.weekly.at < 30 * 60e3 ? s.weekly : await weeklyLimit().catch(() => s.weekly);
   if (weekly && weekly.remaining <= 0 && weekly.resetAt > now) {
     await status('st_weekly', { date: weekly.resetAt });
+    if (s.notifiedWeek !== weekly.resetAt) { await save({ notifiedWeek: weekly.resetAt }); await notify('n_weekly', { date: weekly.resetAt }); }
     await waitWhileRunning(Math.min(weekly.resetAt - now + 60e3, 6 * 3600e3));
     return weeklyLimit().catch(() => null);
   }
 
   const queue = s.queue.filter(q => !q.done);
   const item = queue.find(q => titleState(q) !== 'cooldown');
-  if (!queue.length) { await save({ running: false, current: null }); return status('st_all_done'); }
+  if (!queue.length) { await save({ running: false, current: null }); await notify('n_all_done'); return status('st_all_done'); }
   if (!item) {
     // Every title is waiting for its chapters to come off cooldown.
     const until = Math.min(...queue.map(q => q.cooldownUntil));
@@ -408,7 +437,7 @@ async function step() {
   const r = reader();
   if (!r || r.slug !== item.slug) {
     // Start of a title, after its last chapter (the reader returns to the title page), or after a switch.
-    if (s.autoBuy) await autoBuy(item.slug, s.ranks);
+    if (s.autoBuy) await autoBuy(item.slug, s.ranks, item.name);
     const st = await shardState(item.slug, s.ranks);
     if (['complete', 'enough', 'noCards'].includes(titleState(st))) {
       await updateItem(item.slug, { ...st, done: true });

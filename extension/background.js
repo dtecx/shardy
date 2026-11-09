@@ -1,4 +1,5 @@
-// Service worker: owns the farm window and the timer the reader runs on.
+// Service worker: owns the farm window, the timer the reader runs on, and desktop notifications.
+importScripts('shared.js'); // strings and date formatting shared with the popup
 
 // The cover CDN answers 403 to requests without a Referer, and extension pages send none.
 // Session rule, limited to requests made outside any tab (the popup): the site's own pages are untouched.
@@ -32,6 +33,10 @@ chrome.runtime.onMessage.addListener((msg, sender, reply) => {
     chrome.storage.local.get('farmTabId').then(s => reply(s.farmTabId === sender.tab?.id));
     return true;
   }
+  if (msg?.type === 'notify') {
+    notify(msg.k, msg.p).then(() => reply(true));
+    return true;
+  }
   if (msg?.type === 'start') {
     start().then(() => reply(true), e => reply(String(e)));
     return true;
@@ -56,3 +61,9 @@ chrome.tabs.onRemoved.addListener(async id => {
   await chrome.storage.local.set({ farmTabId: null });
   if (running) await chrome.storage.local.set({ running: false, status: { k: 'st_tab_closed', at: Date.now() } });
 });
+
+async function notify(key, params) {
+  const { notify: on = true, lang = 'ru' } = await chrome.storage.local.get(['notify', 'lang']);
+  if (!on) return;
+  await chrome.notifications.create({ type: 'basic', iconUrl: 'icons/icon128.png', title: 'Shardy', message: tDated(lang, key, params || {}), priority: 0 });
+}

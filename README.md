@@ -17,11 +17,13 @@
 **Shardy** is a Chrome extension that collects card shards on [MangaLib](https://mangalib.me) for you. Pick the titles whose cards you want; Shardy reads their chapters page by page at a human pace, but only the chapters that actually pay shards right now. It stays inside the site's weekly limit and moves to the next title as soon as the current one has enough shards for every missing card.
 
 <p align="center">
-  <img src="docs/popup-farming.jpg" alt="Popup while farming: current title, time left, pace and weekly limit" width="30%">
+  <img src="docs/popup-farming.jpg" alt="Popup while farming: current title, time left, pace and weekly limit" width="23%">
   &nbsp;
-  <img src="docs/popup-import.jpg" alt="Adding titles from bookmark folders with their card status" width="30%">
+  <img src="docs/popup-import.jpg" alt="Adding titles from bookmark folders with their card status" width="23%">
   &nbsp;
-  <img src="docs/popup-settings.jpg" alt="Settings: speed, daily cap, card ranks, auto-exchange, language" width="30%">
+  <img src="docs/popup-settings.jpg" alt="Settings: speed, daily cap, card ranks, auto-exchange, language" width="23%">
+  &nbsp;
+  <img src="docs/popup-history.jpg" alt="History: shards per day and cards obtained" width="23%">
 </p>
 
 ## Features
@@ -35,6 +37,10 @@
 - **Leaves your bookmarks alone.** Reading moves your "continue reading" mark; Shardy saves yours before a title and puts it back at breaks, when the title is done and on Stop.
 - **Runs in the background.** Reading happens in its own small window, and its timer runs in the service worker, which Chrome doesn't slow down for hidden tabs.
 - **Handles ads.** Shardy never clicks an ad. A full-screen ad between chapters stays up for a few seconds, then Shardy closes or hides it. If the reader stops responding, it reloads the chapter.
+- **Notifications.** A desktop notification when a title has enough shards, a card is obtained, the weekly limit runs out or the whole queue is done. One switch turns them off.
+- **History.** Shards and chapters per day for the last two weeks, 7-day totals and a list of the cards you got.
+- **Update notice.** When a new version is out on GitHub Releases, the popup shows a link to it.
+- **Queue backup.** Export the queue to a JSON file and import it in another browser or share it with a friend.
 - **Looks like MangaLib.** The popup uses the site's own colors and rank colors, has light and dark themes, and comes in Russian and Ukrainian.
 
 ## How MangaLib's shard rules work
@@ -56,9 +62,11 @@ Checked against the site's code, its API and the official "Глобальное 
 
 ## Install
 
-1. Download this repository (**Code → Download ZIP**) and unzip it.
+1. Download `shardy-vX.Y.Z.zip` from [Releases](https://github.com/dtecx/shardy/releases/latest) and unzip it.
 2. Open `chrome://extensions` and turn on **Developer mode**.
-3. Click **Load unpacked** and choose the `extension` folder.
+3. Click **Load unpacked** and choose the unzipped `shardy` folder.
+
+To update, unzip the new version into the same folder, replacing the old files, then press the reload button on the extension card. Keep the folder where it is: Chrome ties an unpacked extension's data to its folder, so loading a copy from somewhere else starts with an empty queue.
 4. Log in on mangalib.me and keep one MangaLib tab open; the popup checks your account through it.
 
 ## Use
@@ -113,13 +121,20 @@ extension/            the extension itself (load this folder in Chrome)
   shared.js           card math, time estimate, RU/UA strings (used by popup and content script)
   icons/
 tests/shared.test.js  self-check for the card math and the time estimate
+scripts/build.sh      builds the release zip locally
 docs/                 banner and screenshots
 ```
 
-There is no build step and no dependencies. To run the self-check:
+There are no dependencies. Run the self-check:
 
 ```bash
 node tests/shared.test.js
+```
+
+Build the release zip (`dist/shardy-vX.Y.Z.zip`; the version comes from `extension/manifest.json`):
+
+```bash
+./scripts/build.sh
 ```
 
 ## Disclaimer

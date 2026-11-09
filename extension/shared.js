@@ -13,6 +13,7 @@ const DEFAULTS = {
   speed: 'normal',
   ...PRESETS.normal,
   ranks: ['E', 'D', 'C', 'B', 'A'],
+  notify: true,       // desktop notifications
   autoBuy: false,     // exchange shards for missing cards as soon as a rank is affordable
   queue: [],          // [{ slug, name, cover, balance, need, done, noCards, collected, total, pagesPerCh }]
   stats: {},          // { secPerPage, shardsPerCh, pagesPerCh }
@@ -117,6 +118,18 @@ const cyclesLeft = (s, items) => Math.max(0, ...[].concat(items).map(q => titleP
 
 const STR = {
   ru: {
+    tabHistory: 'История', hShards7: 'Осколков за 7 дн.', hChapters7: 'Глав за 7 дн.', hCards: 'Карт получено',
+    hChart: 'Осколки по дням, последние 14 дней', hBar: '{date}: {s} осколков, {c} глав', hCardsTitle: 'Последние карты',
+    hNoCards: 'Пока нет карт. Новые карты появятся здесь после обмена.', hEmpty: 'История появится после первой прочитанной главы.',
+    hCardUnknown: 'карта из «{title}»',
+    notifications: 'Уведомления', notifyHint: 'Тайтл готов, получена карта, недельный лимит исчерпан, всё готово.',
+    backup: 'Очередь в файл', exportQueue: 'Экспорт', importQueue: 'Импорт', importPick: 'Выбрать файл…',
+    importHint: 'Файл JSON с тайтлами из очереди: перенести на другой браузер или поделиться с другом.',
+    importDone: 'Импортировано: {n}, пропущено: {m}', importBad: 'Это не файл очереди Shardy.',
+    importTab: 'Выберите файл в этой вкладке.',
+    update: 'Вышла версия {v}', updateGet: 'Скачать', version: 'Версия {v}',
+    n_title_done: '«{name}»: осколков хватает на все карты', n_card: 'Новая карта {rank}: {name}',
+    n_weekly: 'Недельный лимит осколков исчерпан. Продолжу {date}.', n_all_done: 'Все тайтлы в очереди готовы',
     stCooldown: 'Главы на откате до {date}', weekLabel: 'Лимит недели', laterNote: 'Главы платят раз в {d} дн., поэтому нужно ещё {n} цикла(ов) отката',
     payNow: 'платят {e} из {c} глав', myShards: 'С осколками', ranksSL: 'S и L на осколки не меняются: S — за активность и события, L — за обмен полного альбома.',
     st_weekly: 'Недельный лимит осколков исчерпан, продолжу {date}', st_all_cooldown: 'Все главы на откате, продолжу {date}',
@@ -176,6 +189,18 @@ const STR = {
     st_not_logged: 'Остановлено: нет входа в аккаунт',
   },
   uk: {
+    tabHistory: 'Історія', hShards7: 'Уламків за 7 дн.', hChapters7: 'Розділів за 7 дн.', hCards: 'Карт отримано',
+    hChart: 'Уламки по днях, останні 14 днів', hBar: '{date}: {s} уламків, {c} розділів', hCardsTitle: 'Останні карти',
+    hNoCards: 'Поки немає карт. Нові карти з’являться тут після обміну.', hEmpty: 'Історія з’явиться після першого прочитаного розділу.',
+    hCardUnknown: 'карта з «{title}»',
+    notifications: 'Сповіщення', notifyHint: 'Тайтл готовий, отримано карту, тижневий ліміт вичерпано, усе готово.',
+    backup: 'Черга у файл', exportQueue: 'Експорт', importQueue: 'Імпорт', importPick: 'Вибрати файл…',
+    importHint: 'Файл JSON із тайтлами з черги: перенести в інший браузер або поділитися з другом.',
+    importDone: 'Імпортовано: {n}, пропущено: {m}', importBad: 'Це не файл черги Shardy.',
+    importTab: 'Виберіть файл у цій вкладці.',
+    update: 'Вийшла версія {v}', updateGet: 'Завантажити', version: 'Версія {v}',
+    n_title_done: '«{name}»: уламків вистачає на всі карти', n_card: 'Нова карта {rank}: {name}',
+    n_weekly: 'Тижневий ліміт уламків вичерпано. Продовжу {date}.', n_all_done: 'Усі тайтли в черзі готові',
     stCooldown: 'Розділи на відкаті до {date}', weekLabel: 'Ліміт тижня', laterNote: 'Розділи платять раз на {d} дн., тож потрібно ще {n} цикл(и) відкату',
     payNow: 'платять {e} з {c} розділів', myShards: 'З уламками', ranksSL: 'S і L на уламки не обмінюються: S — за активність і події, L — за обмін повного альбому.',
     st_weekly: 'Тижневий ліміт уламків вичерпано, продовжу {date}', st_all_cooldown: 'Усі розділи на відкаті, продовжу {date}',
@@ -239,6 +264,23 @@ const STR = {
 function t(lang, key, params = {}) {
   const s = (STR[lang] || STR.ru)[key] ?? STR.ru[key] ?? key;
   return s.replace(/\{(\w+)\}/g, (_, k) => params[k] ?? '');
+}
+
+const localeOf = lang => (lang === 'uk' ? 'uk-UA' : 'ru-RU');
+// Messages carry raw timestamps in `date`; every place that shows one formats it the same way.
+function tDated(lang, key, params = {}) {
+  const p = typeof params.date === 'number' ? { ...params, date: new Date(params.date).toLocaleDateString(localeOf(lang), { weekday: 'long', day: 'numeric', month: 'long' }) } : params;
+  return t(lang, key, p);
+}
+
+// Compares dotted versions: 1 when a > b.
+function compareVersions(a, b) {
+  const pa = String(a).replace(/^v/, '').split('.').map(Number), pb = String(b).replace(/^v/, '').split('.').map(Number);
+  for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
+    const d = (pa[i] || 0) - (pb[i] || 0);
+    if (d) return Math.sign(d);
+  }
+  return 0;
 }
 
 function formatDuration(lang, sec) {

@@ -248,7 +248,122 @@ function renderSettings() {
   $('ranksSL').textContent = tr('ranksSL');
   chipGroup($('autobuy'), [[true, tr('on')], [false, tr('off')]], v => !!s.autoBuy === v, autoBuy => store({ autoBuy }));
   chipGroup($('langs'), [['ru', 'Русский'], ['uk', 'Українська']], l => s.lang === l, lang => store({ lang }));
+  chipGroup($('notify'), [[true, tr('on')], [false, tr('off')]], v => (s.notify !== false) === v, notify => store({ notify }));
+  $('versionLine').textContent = tr('version', { v: chrome.runtime.getManifest().version });
 }
+
+// --- history: shards per day for two weeks, totals, and the cards obtained ---
+const shortDay = d => d.toLocaleDateString(locale(), { day: 'numeric', month: 'short' });
+function renderHistory() {
+  const h = s.history || {};
+  const days = Array.from({ length: 14 }, (_, i) => {
+    const d = new Date(Date.now() - (13 - i) * 864e5);
+    return { d, ...(h[d.toLocaleDateString('sv')] || { shards: 0, chapters: 0, cards: 0 }) };
+  });
+  const week = days.slice(-7);
+  const total = (arr, k) => arr.reduce((n, x) => n + (x[k] || 0), 0);
+  const fact = (label, value) => el('div', {}, el('dt', { textContent: label }), el('dd', { className: 'num', textContent: fmt(value) }));
+  $('hFacts').replaceChildren(
+    fact(tr('hShards7'), total(week, 'shards')),
+    fact(tr('hChapters7'), total(week, 'chapters')),
+    fact(tr('hCards'), total(Object.values(h), 'cards')));
+
+  const chart = $('hChart');
+  const max = Math.max(...days.map(x => x.shards));
+  if (!max && !Object.keys(h).length) { chart.replaceChildren(el('p', { className: 'muted', textContent: tr('hEmpty') })); }
+  else {
+    // One series, one hue: bar height = shards that day; the tallest bar carries its value, the rest show on hover.
+    const tip = el('div', { className: 'tip', hidden: true });
+    const label = x => tr('hBar', { date: shortDay(x.d), s: x.shards, c: x.chapters });
+    const bars = el('div', { className: 'bars', role: 'list', ariaLabel: tr('hChart') }, ...days.map(x => {
+      const pct = max ? (100 * x.shards) / max : 0;
+      const col = el('div', { className: 'col', tabIndex: 0, role: 'listitem', ariaLabel: label(x) },
+        el('i', { style: `height:${pct}%` }),
+        x.shards === max && max ? el('em', { className: 'peak num', style: `--h:${pct}%`, textContent: x.shards }) : null);
+      const show = () => {
+        tip.textContent = label(x);
+        tip.hidden = false;
+        // Centered on the bar, but kept inside the chart so it never runs off the popup.
+        const half = tip.offsetWidth / 2, center = col.offsetLeft + col.offsetWidth / 2;
+        tip.style.left = `${Math.min(Math.max(center, half), chart.clientWidth - half)}px`;
+      };
+      col.onmouseenter = col.onfocus = show;
+      col.onmouseleave = col.onblur = () => { tip.hidden = true; };
+      return col;
+    }));
+    chart.replaceChildren(tip, bars, el('div', { className: 'axis num' }, el('span', { textContent: shortDay(days[0].d) }), el('span', { textContent: shortDay(days[13].d) })));
+  }
+
+  const log = s.cardLog || [];
+  $('hCards').replaceChildren(...(log.length ? log.map(c => el('li', { className: 'row' },
+    el('span', { className: 'rankdot ' + (c.rank || ''), textContent: c.rank || '?' }),
+    el('div', { className: 'row-meta' },
+      el('div', { className: 'row-name', textContent: c.name || tr('hCardUnknown', { title: c.title }), title: c.name || '' }),
+      el('div', { className: 'row-sub', textContent: `${c.title} · ${new Date(c.at).toLocaleDateString(locale(), { day: 'numeric', month: 'long' })}` })))) :
+    [el('li', { className: 'muted', textContent: tr('hNoCards') })]));
+}
+
+// --- update notice: latest GitHub release vs the installed version, checked twice a day ---
+const RELEASES_API = 'https://api.github.com/repos/dtecx/shardy/releases/latest';
+const RELEASE_URL = /^https:\/\/github\.com\/dtecx\/shardy\/releases\//;
+async function checkUpdate() {
+  const { update } = await chrome.storage.local.get('update');
+  if (update && Date.now() - update.checkedAt < 12 * 3600e3) return;
+  const r = await fetch(RELEASES_API, { headers: { Accept: 'application/vnd.github+json' } }).then(x => (x.ok ? x.json() : null)).catch(() => null);
+  await store({ update: { checkedAt: Date.now(), tag: r?.tag_name || update?.tag || null, url: r?.html_url || update?.url || null } });
+}
+function renderUpdate() {
+  const u = s.update, a = $('update');
+  const newer = u?.tag && RELEASE_URL.test(u.url || '') && compareVersions(u.tag, chrome.runtime.getManifest().version) > 0;
+  a.hidden = !newer;
+  if (!newer) return;
+  a.href = u.url;
+  a.replaceChildren(el('span', { textContent: tr('update', { v: u.tag.replace(/^v/, '') }) }), el('b', { textContent: `${tr('updateGet')} →` }));
+}
+
+// --- queue backup: export to a JSON file, import from one ---
+$('exportQueue').onclick = () => {
+  const data = { app: 'shardy', version: chrome.runtime.getManifest().version, exportedAt: new Date().toISOString(), ranks: s.ranks, queue: s.queue.map(({ slug, name, cover }) => ({ slug, name, cover })) };
+  const url = URL.createObjectURL(new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' }));
+  const a = el('a', { href: url, download: `shardy-queue-${new Date().toLocaleDateString('sv')}.json` });
+  document.body.append(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+};
+// A file picker closes the popup, so importing happens in a full tab of the same page.
+const isPopup = () => chrome.extension.getViews({ type: 'popup' }).includes(window);
+$('importQueue').onclick = () => {
+  if (!isPopup()) return $('importFile').click();
+  chrome.tabs.create({ url: chrome.runtime.getURL('popup.html#import') });
+  window.close();
+};
+// The file comes from outside: keep only well-formed titles from MangaLib, with known cover hosts.
+function parseQueueFile(text) {
+  let d;
+  try { d = JSON.parse(text); } catch { return null; }
+  if (d?.app !== 'shardy' || !Array.isArray(d.queue)) return null;
+  const ok = [];
+  for (const x of d.queue.slice(0, 500)) {
+    if (typeof x?.slug !== 'string' || !/^\d+--[a-z0-9-]{1,200}$/i.test(x.slug)) continue;
+    ok.push({
+      slug: x.slug,
+      name: typeof x.name === 'string' && x.name.trim() ? x.name.trim().slice(0, 200) : x.slug,
+      cover: typeof x.cover === 'string' && x.cover.startsWith('https://cover.imglib.info/') ? x.cover : '',
+    });
+  }
+  return { ok, skipped: d.queue.length - ok.length };
+}
+$('importFile').onchange = async () => {
+  const file = $('importFile').files[0];
+  $('importFile').value = '';
+  if (!file) return;
+  const parsed = file.size < 2e6 ? parseQueueFile(await file.text()) : null;
+  if (!parsed) { $('importMsg').textContent = tr('importBad'); return; }
+  const fresh = parsed.ok.filter(x => !inQueue(x.slug));
+  $('importMsg').textContent = tr('importDone', { n: fresh.length, m: parsed.skipped + parsed.ok.length - fresh.length });
+  await addTitles(fresh);
+};
 
 async function render() {
   s = await load();
@@ -257,6 +372,8 @@ async function render() {
   renderHero();
   renderQueue();
   renderSettings();
+  renderHistory();
+  renderUpdate();
 }
 
 // A new pace makes the measured page time stale; the ETA falls back to the estimate until re-measured.
@@ -461,4 +578,9 @@ chrome.storage.onChanged.addListener(changes => {
   render();
 });
 setInterval(() => { renderHero(); renderQueue(); }, 15000); // keeps the time left moving between page turns
-render().then(checkAccount);
+if (location.hash === '#import') {
+  document.documentElement.classList.add('page');
+  $('tab-settings').click();
+  setTimeout(() => { $('importMsg').textContent = tr('importTab'); $('importQueue').focus(); }, 300);
+}
+render().then(checkAccount).then(checkUpdate);

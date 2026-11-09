@@ -2,8 +2,8 @@
 const fs = require('fs'); const vm = require('vm'); const assert = require('assert'); const path = require('path');
 const file = process.argv[2] || path.join(__dirname, '..', 'extension', 'shared.js');
 const ctx = {}; vm.createContext(ctx);
-vm.runInContext(fs.readFileSync(file, 'utf8') + ';this.X={titleSummary,titleState,etaSeconds,titlePlan,cyclesLeft,paceOf,t,formatDuration,DEFAULTS,STR,CH_OVERHEAD_SEC,COOLDOWN_SEC};', ctx);
-const { titleSummary, titleState, etaSeconds, titlePlan, cyclesLeft, t, formatDuration, DEFAULTS, STR, CH_OVERHEAD_SEC, COOLDOWN_SEC } = ctx.X;
+vm.runInContext(fs.readFileSync(file, 'utf8') + ';this.X={compareVersions,tDated,titleSummary,titleState,etaSeconds,titlePlan,cyclesLeft,paceOf,t,formatDuration,DEFAULTS,STR,CH_OVERHEAD_SEC,COOLDOWN_SEC};', ctx);
+const { compareVersions, tDated, titleSummary, titleState, etaSeconds, titlePlan, cyclesLeft, t, formatDuration, DEFAULTS, STR, CH_OVERHEAD_SEC, COOLDOWN_SEC } = ctx.X;
 const plain = o => JSON.parse(JSON.stringify(o));
 // Real API shape for Необъятный океан (0 of 13 cards).
 const data = { balance: { amount: 7 }, exchange_options: [
@@ -51,4 +51,13 @@ assert.strictEqual(etaSeconds(s, { need: 0, balance: 0, total: 5, collected: 5 }
 assert.strictEqual(titleState({ need: 100, balance: 0, cooldownUntil: Date.now() + 1000 }), 'cooldown');
 assert.strictEqual(t('uk', 'cards', { c: 1, t: 2 }), 'Карти 1/2');
 assert.deepStrictEqual(Object.keys(STR.ru).sort(), Object.keys(STR.uk).sort());
+// Update check: newer release only when the version is really higher.
+assert.strictEqual(compareVersions('v0.6.0', '0.5.0'), 1);
+assert.strictEqual(compareVersions('0.5.0', 'v0.5.0'), 0);
+assert.strictEqual(compareVersions('0.5.10', '0.5.9'), 1);
+assert.strictEqual(compareVersions('0.4.9', '0.5'), -1);
+// Notification text formats timestamps in the chosen language.
+assert.ok(/понедельник/.test(tDated('ru', 'n_weekly', { date: Date.parse('2026-11-16T06:00:00Z') })));
+assert.ok(/понеділок/.test(tDated('uk', 'n_weekly', { date: Date.parse('2026-11-16T06:00:00Z') })));
+assert.strictEqual(tDated('ru', 'n_card', { rank: 'E', name: 'Тиса' }), 'Новая карта E: Тиса');
 console.log('shared.js self-check ok');
