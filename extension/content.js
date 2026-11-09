@@ -143,6 +143,21 @@ async function autoBuy(slug, ranks, title) {
   return bought;
 }
 
+// --- account detection: tell the service worker who is logged in, on load and on every login change ---
+async function reportAccount() {
+  let me;
+  try { me = await api('auth/me'); } catch (e) { if (!(e instanceof AuthError)) return; me = null; } // network error: say nothing
+  await chrome.runtime.sendMessage({ type: 'account', account: me?.id ? { id: me.id, name: me.username } : null }).catch(() => {});
+}
+let accountTimer;
+// Fires in this tab when another MangaLib tab logs in, logs out or switches accounts.
+window.addEventListener('storage', e => {
+  if (e.key !== 'auth') return;
+  clearTimeout(accountTimer);
+  accountTimer = setTimeout(reportAccount, 1500);
+});
+if (window.top === window) reportAccount();
+
 // The popup has no access to the site's login, so it asks this script to make API calls.
 chrome.runtime.onMessage.addListener((msg, _sender, reply) => {
   if (msg?.type === 'auth') { authMe().then(reply); return true; }
@@ -406,6 +421,7 @@ async function step() {
     return new Promise(r => setTimeout(r, 5000));
   }
   if (!(await chrome.runtime.sendMessage('amFarmTab'))) return new Promise(r => setTimeout(r, 5000));
+  if (s.ownerId != null && s.account && s.account.id !== s.ownerId) return new Promise(r => setTimeout(r, 3000)); // switch in progress
 
   // Weekly shard limit for reading: nothing more to earn until the reset.
   const now = Date.now();
@@ -469,7 +485,10 @@ async function step() {
   if (!isPageImage(el)) return handleBlocked(el);
   adSince = 0;
   clickAt(el, x, y);
-  await sleep(1500);
+  // Wait for the reader to show the next page: quick when it's ready, at most about 1.5 s.
+  const urlPage = () => location.pathname + '|' + (new URLSearchParams(location.search).get('p') || 1);
+  const was = urlPage();
+  for (let i = 0; i < 10 && urlPage() === was; i++) await sleep(150);
 
   const after = reader();
   if (!after) { stuck = 0; return; } // the reader left the title (after its last chapter); next step picks a chapter

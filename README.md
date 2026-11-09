@@ -40,6 +40,8 @@
 - **Notifications.** A desktop notification when a title has enough shards, a card is obtained, the weekly limit runs out or the whole queue is done. One switch turns them off.
 - **History.** Shards and chapters per day for the last two weeks, 7-day totals and a list of the cards you got.
 - **Update notice.** When a new version is out on GitHub Releases, the popup shows a link to it.
+- **Several accounts.** Each MangaLib account keeps its own queue, history and saved bookmarks. Log out and farming stops; log into another account and its own data loads; come back and yours returns.
+- **Your own pace.** Page pause in ms, s or min (down to 100 ms) and break length in s or min.
 - **Queue backup.** Export the queue to a JSON file and import it in another browser or share it with a friend.
 - **Looks like MangaLib.** The popup uses the site's own colors and rank colors, has light and dark themes, and comes in Russian and Ukrainian.
 
@@ -120,7 +122,7 @@ extension/            the extension itself (load this folder in Chrome)
   popup.html / .js    the popup UI
   shared.js           card math, time estimate, RU/UA strings (used by popup and content script)
   icons/
-tests/shared.test.js  self-check for the card math and the time estimate
+tests/                self-checks: card math and time estimate, account switching
 scripts/build.sh      builds the release zip locally
 docs/                 banner and screenshots
 ```
@@ -129,6 +131,7 @@ There are no dependencies. Run the self-check:
 
 ```bash
 node tests/shared.test.js
+node tests/accounts.test.js
 ```
 
 Build the release zip (`dist/shardy-vX.Y.Z.zip`; the version comes from `extension/manifest.json`):

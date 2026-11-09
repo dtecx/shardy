@@ -114,6 +114,13 @@
   body.compact .hero .shards, body.compact .hero .now-meta .eyebrow:not(.live) { display: none; }
   body.compact .hero .cta { margin: 0; height: 32px; width: auto; padding: 0 12px; font-size: 13px; }
   body.compact .hero .cta small { display: none; }
+  .sk { display: block; border-radius: 4px; background: linear-gradient(90deg, var(--fill) 25%, var(--fill-hover) 50%, var(--fill) 75%); background-size: 200% 100%; animation: shimmer 1.2s linear infinite; }
+  @keyframes shimmer { to { background-position: -200% 0; } }
+  .sk-line { height: 12px; margin: 6px 0; }
+  .sk-pill { width: 96px; height: 24px; border-radius: 12px; }
+  .sk-chip { width: 72px; height: 28px; border-radius: var(--r-control); }
+  .spin { width: 14px; height: 14px; border: 2px solid currentColor; border-right-color: transparent; border-radius: 50%; animation: spin .8s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
   .lead { margin: 0; color: var(--ink-soft); font-size: 13px; text-wrap: pretty; }
 
   /* tabs, like the title page tabs */
@@ -162,7 +169,12 @@
   .field svg { position: absolute; left: 10px; top: 50%; transform: translateY(-50%); color: var(--ink-muted); }
   input[type=search], input[type=number] { width: 100%; height: 34px; padding: 0 10px 0 32px; border: 1px solid var(--field-edge); border-radius: var(--r-control); background: var(--field); outline: none; }
   input[type=search]:focus, input[type=number]:focus { border-color: var(--orange); }
-  input[type=number] { width: 46px; padding: 0 4px; text-align: center; height: 30px; }
+  input[type=number] { width: 56px; padding: 0 4px; text-align: center; height: 30px; color: var(--ink); }
+  /* preset values are shown dimmed; editing any of them switches to "custom" and they turn white */
+  .grid.preset input[type=number] { color: var(--ink-muted); }
+  select.unit { height: 30px; width: 52px; padding: 0 4px; border: 1px solid var(--field-edge); border-radius: var(--r-control); background: var(--field); color: var(--ink); font: inherit; font-size: 12px; outline: none; }
+  select.unit:focus { border-color: var(--orange); }
+  .unit-gap { width: 52px; flex: none; }
   .chips { display: flex; flex-wrap: wrap; gap: 6px; }
   .chip { height: 28px; padding: 0 10px; border: 1px solid var(--edge-strong); border-radius: var(--r-control); background: none; color: var(--ink-soft); font-size: 13px; }
   .chip:hover { background: var(--fill); }
@@ -238,12 +250,16 @@
 
   <div class="bar">
     <div class="brand"><svg class="shard" aria-hidden="true"><use href="#i-shard"/></svg><span>Shard<b>y</b></span></div>
-    <div class="who" id="account"></div>
+    <div class="who" id="account"><span class="sk sk-pill"></span></div>
   </div>
 
   <a class="update" id="update" href="#" target="_blank" rel="noopener" hidden></a>
 
-  <div class="hero" id="hero"></div>
+  <div class="hero" id="hero">
+    <div class="now"><span class="cover sk"></span><div class="now-meta"><span class="sk sk-line" style="width:40%"></span><span class="sk sk-line" style="width:75%"></span><span class="sk sk-line" style="width:55%"></span></div></div>
+    <span class="sk sk-line" style="margin-top:14px"></span>
+    <span class="sk" style="height:40px;margin-top:12px;border-radius:6px"></span>
+  </div>
 
   <div class="tabs" role="tablist">
     <button role="tab" id="tab-queue" aria-controls="queue" aria-selected="true"><span data-i18n="tabQueue"></span><sup id="queueCount" class="num"></sup></button>
@@ -253,7 +269,7 @@
   </div>
 
   <section class="tabpanel" id="queue" role="tabpanel" aria-labelledby="tab-queue">
-    <ul id="queueList"></ul>
+    <ul id="queueList"><li class="row"><span class="cover sk"></span><div class="row-meta"><span class="sk sk-line" style="width:60%"></span><span class="sk sk-line" style="width:85%"></span></div></li><li class="row"><span class="cover sk"></span><div class="row-meta"><span class="sk sk-line" style="width:50%"></span><span class="sk sk-line" style="width:80%"></span></div></li></ul>
   </section>
 
   <section class="tabpanel" id="add" role="tabpanel" aria-labelledby="tab-add" hidden>
@@ -284,12 +300,13 @@
     <h3 data-i18n="speed"></h3>
     <div class="chips seg" id="speeds" role="group"></div>
     <div class="hint" id="speedHint"></div>
-    <div class="grid">
-      <span data-i18n="secPerPage"></span><span class="pair"><input id="pageMin" type="number" min="2" aria-label="min">–<input id="pageMax" type="number" min="2" aria-label="max"></span>
-      <span data-i18n="breakEvery"></span><span class="pair"><input id="breakEveryMin" type="number" min="1" aria-label="min">–<input id="breakEveryMax" type="number" min="1" aria-label="max"></span>
-      <span data-i18n="breakLen"></span><span class="pair"><input id="breakMin" type="number" min="0" aria-label="min">–<input id="breakMax" type="number" min="0" aria-label="max"></span>
-      <label for="dailyMax" data-i18n="dailyMax"></label><span class="pair"><input id="dailyMax" type="number" min="0"></span>
+    <div class="grid" id="paceGrid">
+      <span data-i18n="pausePerPage"></span><span class="pair"><input id="pageMin" type="number" min="0" step="any" aria-label="min">–<input id="pageMax" type="number" min="0" step="any" aria-label="max"><select id="pageUnit" class="unit" aria-label="unit"></select></span>
+      <span data-i18n="breakEvery"></span><span class="pair"><input id="breakEveryMin" type="number" min="1" aria-label="min">–<input id="breakEveryMax" type="number" min="1" aria-label="max"><span class="unit-gap"></span></span>
+      <span data-i18n="breakLength"></span><span class="pair"><input id="breakMin" type="number" min="0" step="any" aria-label="min">–<input id="breakMax" type="number" min="0" step="any" aria-label="max"><select id="breakUnit" class="unit" aria-label="unit"></select></span>
+      <label for="dailyMax" data-i18n="dailyMax"></label><span class="pair"><input id="dailyMax" type="number" min="0"><span class="unit-gap"></span></span>
     </div>
+    <div class="hint" data-i18n="customHint"></div>
     <h3 data-i18n="ranks"></h3>
     <div class="chips" id="ranks" role="group"></div>
     <div class="hint" data-i18n="ranksHint"></div>

@@ -54,11 +54,21 @@ async function proxy(msg) {
 async function checkAccount() {
   try {
     const me = await proxy({ type: 'auth' });
-    account = me?.loggedIn ? { state: 'ok', name: me.name, id: me.id } : { state: 'none' };
+    if (me?.loggedIn || !me?.error) {
+      // A definite answer (logged in, or logged out): the service worker swaps per-account data if it changed.
+      await chrome.runtime.sendMessage({ type: 'account', account: me?.loggedIn ? { id: me.id, name: me.name } : null });
+      account = me?.loggedIn ? { state: 'ok', name: me.name, id: me.id } : { state: 'none' };
+    } else if (account.state === 'checking') account = { state: 'reload' }; // site didn't answer and nothing is known yet
     if (account.state === 'ok') proxy({ type: 'weekly' }).catch(() => null); // stored by the content script
   } catch (e) { account = { state: e.code || 'reload' }; }
   renderAccount();
   renderHero();
+  if (!$('add').hidden && folderId == null) loadFolders(); // the Add tab was opened while the check ran
+}
+// The account the extension last saw, shown at once while the real check runs.
+function accountFromStorage() {
+  if (!['checking', 'ok', 'none'].includes(account.state) || !s.account) return;
+  account = s.account.id ? { state: 'ok', id: s.account.id, name: s.account.name } : { state: 'none' };
 }
 
 // --- cache: card data per title and folder lists survive between popup openings ---
@@ -109,7 +119,7 @@ function applyStatic() {
 function renderAccount() {
   const a = $('account');
   a.className = 'who' + (account.state === 'ok' || account.state === 'checking' ? '' : ' off');
-  if (account.state === 'checking') return a.replaceChildren();
+  if (account.state === 'checking') return a.replaceChildren(el('span', { className: 'sk sk-pill', ariaLabel: tr('checkingAccount') }));
   if (account.state === 'ok') {
     return a.replaceChildren(el('span', { className: 'ava', textContent: (account.name || '?')[0].toUpperCase(), ariaHidden: 'true' }), el('span', { textContent: account.name, title: tr('loggedAs', { name: account.name }) }));
   }
@@ -132,7 +142,9 @@ function renderHero() {
   const left = s.queue.filter(q => !q.done);
   if (!s.queue.length) {
     const go = el('button', { className: 'cta', onclick: () => $('tab-add').click() }, icon('plus'), tr('addTitles'));
-    return hero.replaceChildren(el('p', { className: 'lead', textContent: tr('emptyHero') }), go);
+    const event = ['st_account_switched', 'st_logged_out'].includes(s.status?.k) && Date.now() - s.status.at < 5 * 60e3;
+    return hero.replaceChildren(el('p', { className: 'lead', textContent: tr('emptyHero') }), go,
+      event ? el('div', { className: 'note status', role: 'status', textContent: tr(s.status.k, s.status.p) }) : null);
   }
 
   const item = (s.running && s.queue.find(q => q.slug === s.current)) || left[0];
@@ -163,12 +175,14 @@ function renderHero() {
 
   const cta = el('button', { id: 'toggle', className: 'cta' + (s.running ? ' stop' : '') });
   if (s.running) cta.append(icon('pause'), tr('stopFarm'));
+  else if (account.state === 'checking') cta.append(el('span', { className: 'spin', ariaHidden: 'true' }), tr('checkingAccount'));
   else cta.append(icon('play'), tr('startFarm'), el('small', { className: 'num', textContent: `· ${tr('titles', { n: left.length })}` }));
   const reason = !s.running && blockReason();
   cta.disabled = !s.running && (account.state !== 'ok' || !left.length);
   cta.onclick = toggle;
 
-  const note = s.running && s.status
+  const accountEvent = ['st_account_switched', 'st_logged_out'].includes(s.status?.k) && Date.now() - s.status.at < 5 * 60e3;
+  const note = (s.running || accountEvent) && s.status
     ? el('div', { className: 'note status', role: 'status', textContent: `${new Date(s.status.at).toLocaleTimeString(locale(), { hour: '2-digit', minute: '2-digit' })} · ${tr(s.status.k, s.status.p)}` })
     : el('div', { className: 'note', textContent: reason || tr('windowNote') });
   const cycles = cyclesLeft(s, left);
@@ -236,7 +250,11 @@ function renderSettings() {
   chipGroup($('speeds'), ['slow', 'normal', 'fast', 'custom'].map(v => [v, tr(v)]), v => s.speed === v, speed =>
     store(speed === 'custom' ? { speed } : { speed, ...PRESETS[speed], ...freshPace() }));
   $('speedHint').textContent = tr('hint_' + s.speed);
-  for (const k of NUMBER_FIELDS) if (document.activeElement !== $(k)) $(k).value = s[k];
+  for (const k of NUMBER_FIELDS) if (document.activeElement !== $(k)) $(k).value = shown(k);
+  $('paceGrid').classList.toggle('preset', s.speed !== 'custom');
+  for (const [id, units] of [['pageUnit', ['ms', 's', 'min']], ['breakUnit', ['s', 'min']]]) {
+    $(id).replaceChildren(...units.map(u => el('option', { value: u, textContent: tr('unit_' + u), selected: s[id] === u })));
+  }
   chipGroup($('ranks'), RANKS.map(r => [r, r]), r => s.ranks.includes(r), async r => {
     const ranks = s.ranks.includes(r) ? s.ranks.filter(x => x !== r) : [...s.ranks, r];
     if (!ranks.length) return;
@@ -367,6 +385,7 @@ $('importFile').onchange = async () => {
 
 async function render() {
   s = await load();
+  accountFromStorage();
   applyStatic();
   renderAccount();
   renderHero();
@@ -378,7 +397,32 @@ async function render() {
 
 // A new pace makes the measured page time stale; the ETA falls back to the estimate until re-measured.
 const freshPace = () => ({ stats: { ...s.stats, secPerPage: null } });
-for (const k of NUMBER_FIELDS) $(k).onchange = () => store({ [k]: Math.max(0, +$(k).value || 0), speed: 'custom', ...freshPace() });
+// Page pause is stored in seconds and break length in minutes; the popup shows them in the unit the user picked.
+const PER_SECOND = { ms: 1000, s: 1, min: 1 / 60 };
+const TIMED = { pageMin: ['pageUnit', 1], pageMax: ['pageUnit', 1], breakMin: ['breakUnit', 60], breakMax: ['breakUnit', 60] };
+const PAIRS = { pageMin: 'pageMax', breakEveryMin: 'breakEveryMax', breakMin: 'breakMax' };
+const FLOOR = { pageMin: 0.1, pageMax: 0.1, breakEveryMin: 1, breakEveryMax: 1 }; // never below 100 ms per page
+function shown(k) {
+  const t = TIMED[k];
+  if (!t) return s[k];
+  const unit = s[t[0]] || 's';
+  return +(s[k] * t[1] * PER_SECOND[unit]).toFixed(unit === 'ms' ? 0 : 2);
+}
+function stored(k, v) {
+  const t = TIMED[k];
+  return Math.max(FLOOR[k] || 0, t ? v / PER_SECOND[s[t[0]] || 's'] / t[1] : Math.round(v));
+}
+for (const k of NUMBER_FIELDS) $(k).onchange = () => {
+  const v = stored(k, Math.max(0, +$(k).value || 0));
+  const patch = { [k]: v, speed: 'custom', ...freshPace() };
+  // Keep each range valid: raising the minimum above the maximum moves the maximum up, and the other way round.
+  const max = PAIRS[k], min = Object.keys(PAIRS).find(m => PAIRS[m] === k);
+  if (max && v > s[max]) patch[max] = v;
+  if (min && v < s[min]) patch[min] = v;
+  store(patch);
+};
+$('pageUnit').onchange = () => store({ pageUnit: $('pageUnit').value });
+$('breakUnit').onchange = () => store({ breakUnit: $('breakUnit').value });
 
 // --- adding titles ---
 const titleFrom = m => ({ slug: m.slug_url, name: m.rus_name || m.name, cover: m.cover?.thumbnail || m.cover?.default || '' });
@@ -432,9 +476,11 @@ $('search').oninput = () => {
 // --- smart bookmark import: every title in the folder is checked for cards before you pick ---
 let folderId = null, bookmarkItems = [], bookmarkSort = 'fast', loadSeq = 0;
 async function loadFolders() {
+  if (account.state === 'checking') return $('folders').replaceChildren(...[0, 1, 2].map(() => el('span', { className: 'sk sk-chip' }))); // loads when the check ends
   if (account.state !== 'ok') { $('folders').replaceChildren(el('div', { className: 'hint', textContent: blockReason() || '' })); return; }
   await cacheReady;
   let folders = cache.folders._list || [];
+  if (!folders.length) $('folders').replaceChildren(...[0, 1, 2].map(() => el('span', { className: 'sk sk-chip' })));
   const draw = () => chipGroup($('folders'), [{ id: 'shards', name: tr('myShards'), count: '' }, ...folders].map(f => [f.id, f.name, f.count !== '' && el('sup', { className: 'num', textContent: f.count })]), id => id === folderId, id => { folderId = id; draw(); loadBookmarks(); });
   chipGroup($('bmSort'), [['fast', tr('sortFast')], ['progress', tr('sortProgress')], ['name', tr('sortName')]], v => v === bookmarkSort, v => { bookmarkSort = v; renderBookmarks(); }, 'chip');
   $('bmSort').hidden = false;
@@ -460,6 +506,7 @@ async function loadBookmarks() {
     renderBookmarks();
   };
   if (cache.folders[key]) show(cache.folders[key].titles);
+  else $('bookmarkList').replaceChildren(...[0, 1, 2].map(() => el('li', { className: 'row' }, el('span', { className: 'cover sk' }), el('div', { className: 'row-meta' }, el('span', { className: 'sk sk-line', style: 'width:55%' }), el('span', { className: 'sk sk-line', style: 'width:80%' })))));
 
   const titles = [];
   if (folderId === 'shards') {
@@ -573,8 +620,15 @@ async function toggle() {
   await chrome.runtime.sendMessage({ type: 'start' });
 }
 
-chrome.storage.onChanged.addListener(changes => {
+chrome.storage.onChanged.addListener(async changes => {
   if (Object.keys(changes).every(k => k === 'cache')) return; // cache writes don't change the view
+  if (changes.ownerId) {
+    cache = { titles: {}, folders: {}, ...(await chrome.storage.local.get('cache')).cache };
+    folderId = null;
+    bookmarkItems = [];
+    $('folders').replaceChildren();
+    $('bookmarkList').replaceChildren();
+  }
   render();
 });
 setInterval(() => { renderHero(); renderQueue(); }, 15000); // keeps the time left moving between page turns

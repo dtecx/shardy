@@ -6,6 +6,7 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 node tests/shared.test.js
+node tests/accounts.test.js
 for f in extension/*.js; do node --check "$f"; done
 
 version=$(node -p "require('./extension/manifest.json').version")

@@ -13,6 +13,8 @@ const DEFAULTS = {
   speed: 'normal',
   ...PRESETS.normal,
   ranks: ['E', 'D', 'C', 'B', 'A'],
+  pageUnit: 's',      // unit the popup shows the page pause in (stored value is always seconds)
+  breakUnit: 'min',   // unit for break length (stored value is always minutes)
   notify: true,       // desktop notifications
   autoBuy: false,     // exchange shards for missing cards as soon as a rank is affordable
   queue: [],          // [{ slug, name, cover, balance, need, done, noCards, collected, total, pagesPerCh }]
@@ -20,6 +22,10 @@ const DEFAULTS = {
   live: null,         // { slug, chapter, page, total, at }: the page being read right now
   status: null,       // { k, p, at }
 };
+
+// Data that belongs to one MangaLib account. On an account switch the service worker parks
+// these under profiles[oldId] and brings back the new account's set (or a clean one).
+const PER_ACCOUNT = ['queue', 'cache', 'history', 'cardLog', 'scans', 'savedBookmarks', 'weekly', 'notifiedWeek', 'day', 'dayCount', 'current', 'live'];
 
 const AVG_PAGES = 45;            // chapter length before a title's real page count is known
 const START_SHARDS_PER_CH = 1.2; // observed 1–2 shards per chapter
@@ -60,7 +66,7 @@ function titleState(item, now = Date.now()) {
 function paceOf(s) {
   const breakEvery = (s.breakEveryMin + s.breakEveryMax) / 2 || 1;
   return {
-    secPerPage: s.stats?.secPerPage || (s.pageMin + s.pageMax) / 2 + 1.6, // delay + page load + click
+    secPerPage: s.stats?.secPerPage || (s.pageMin + s.pageMax) / 2 + 0.8, // pause + waiting for the next page
     shardsPerCh: s.stats?.shardsPerCh || START_SHARDS_PER_CH,
     breakPerCh: ((s.breakMin + s.breakMax) / 2) * 60 / breakEvery,
   };
@@ -118,6 +124,10 @@ const cyclesLeft = (s, items) => Math.max(0, ...[].concat(items).map(q => titleP
 
 const STR = {
   ru: {
+    pausePerPage: 'Пауза на страницу', breakLength: 'Длина перерыва', unit_ms: 'мс', unit_s: 'с', unit_min: 'мин',
+    customHint: 'Любое изменение значений включает «Своя». Совсем короткие паузы заметнее для антифрода.',
+    checkingAccount: 'Проверяю аккаунт…', loading: 'Загрузка…',
+    st_account_switched: 'Аккаунт сменён на {name}: загружена его очередь', st_logged_out: 'Вы вышли из аккаунта MangaLib, фарм остановлен',
     tabHistory: 'История', hShards7: 'Осколков за 7 дн.', hChapters7: 'Глав за 7 дн.', hCards: 'Карт получено',
     hChart: 'Осколки по дням, последние 14 дней', hBar: '{date}: {s} осколков, {c} глав', hCardsTitle: 'Последние карты',
     hNoCards: 'Пока нет карт. Новые карты появятся здесь после обмена.', hEmpty: 'История появится после первой прочитанной главы.',
@@ -189,6 +199,10 @@ const STR = {
     st_not_logged: 'Остановлено: нет входа в аккаунт',
   },
   uk: {
+    pausePerPage: 'Пауза на сторінку', breakLength: 'Тривалість перерви', unit_ms: 'мс', unit_s: 'с', unit_min: 'хв',
+    customHint: 'Будь-яка зміна значень вмикає «Своя». Дуже короткі паузи помітніші для антифроду.',
+    checkingAccount: 'Перевіряю акаунт…', loading: 'Завантаження…',
+    st_account_switched: 'Акаунт змінено на {name}: завантажено його чергу', st_logged_out: 'Ви вийшли з акаунта MangaLib, фарм зупинено',
     tabHistory: 'Історія', hShards7: 'Уламків за 7 дн.', hChapters7: 'Розділів за 7 дн.', hCards: 'Карт отримано',
     hChart: 'Уламки по днях, останні 14 днів', hBar: '{date}: {s} уламків, {c} розділів', hCardsTitle: 'Останні карти',
     hNoCards: 'Поки немає карт. Нові карти з’являться тут після обміну.', hEmpty: 'Історія з’явиться після першого прочитаного розділу.',

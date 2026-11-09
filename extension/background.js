@@ -33,6 +33,10 @@ chrome.runtime.onMessage.addListener((msg, sender, reply) => {
     chrome.storage.local.get('farmTabId').then(s => reply(s.farmTabId === sender.tab?.id));
     return true;
   }
+  if (msg?.type === 'account') {
+    onAccount(msg.account).then(() => reply(true), e => reply(String(e)));
+    return true;
+  }
   if (msg?.type === 'notify') {
     notify(msg.k, msg.p).then(() => reply(true));
     return true;
@@ -66,4 +70,43 @@ async function notify(key, params) {
   const { notify: on = true, lang = 'ru' } = await chrome.storage.local.get(['notify', 'lang']);
   if (!on) return;
   await chrome.notifications.create({ type: 'basic', iconUrl: 'icons/icon128.png', title: 'Shardy', message: tDated(lang, key, params || {}), priority: 0 });
+}
+
+// --- accounts: every MangaLib tab and the popup report who is logged in ---
+// One chain so two tabs reporting at once can't interleave a switch.
+let accountChain = Promise.resolve();
+function onAccount(acc) {
+  accountChain = accountChain.then(() => applyAccount(acc)).catch(() => {});
+  return accountChain;
+}
+async function applyAccount(acc) {
+  const s = await chrome.storage.local.get(['ownerId', 'account', 'profiles', 'running', 'farmTabId', ...PER_ACCOUNT]);
+  const at = Date.now();
+  if (!acc?.id) {
+    // Logged out: keep this account's data where it is, just stop.
+    if (s.account?.id !== null) await chrome.storage.local.set({ account: { id: null, at } });
+    if (s.running) await chrome.storage.local.set({ running: false, status: { k: 'st_logged_out', at } });
+    return;
+  }
+  const account = { id: acc.id, name: acc.name, at };
+  if (s.ownerId == null || s.ownerId === acc.id) {
+    // Same account (or the first one ever seen, which adopts the data already stored).
+    if (s.ownerId == null || s.account?.id !== acc.id || s.account?.name !== acc.name) await chrome.storage.local.set({ ownerId: acc.id, account });
+    return;
+  }
+  // Another account: park the old one's data, bring back this one's (or start clean).
+  const profiles = { ...s.profiles };
+  profiles[s.ownerId] = Object.fromEntries(PER_ACCOUNT.filter(k => s[k] !== undefined).map(k => [k, s[k]]));
+  const next = profiles[acc.id] || {};
+  delete profiles[acc.id];
+  await chrome.storage.local.remove(PER_ACCOUNT);
+  await chrome.storage.local.set({
+    ...next,
+    queue: next.queue || [],
+    profiles,
+    ownerId: acc.id,
+    account,
+    ...(s.running ? { running: false } : {}),
+    status: { k: 'st_account_switched', p: { name: acc.name }, at },
+  });
 }
